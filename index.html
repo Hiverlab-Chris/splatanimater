@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gaussian Splat Viewer</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      overflow: hidden;
+    }
+    canvas { touch-action: none; display: block; }
+
+    #ui {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 290px;
+      max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+    #ui::-webkit-scrollbar { display: none; }
+
+    .panel {
+      background: rgba(10,10,10,0.85);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 14px 16px;
+      backdrop-filter: blur(8px);
+      flex-shrink: 0;
+    }
+
+    /* Collapsible panel header */
+    .panel-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+      margin-bottom: 10px;
+    }
+    .panel-title.toggle {
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0;
+      user-select: none;
+    }
+    .panel-title.toggle::after {
+      content: '▲';
+      font-size: 9px;
+      color: rgba(255,255,255,0.3);
+      transition: transform 0.2s;
+    }
+    .panel-title.toggle.closed::after { transform: rotate(180deg); }
+    .panel-body { margin-top: 10px; }
+    .panel-body.hidden { display: none; }
+
+    /* Drop zones */
+    .drop-zone {
+      border: 2px dashed rgba(255,255,255,0.2);
+      border-radius: 8px;
+      padding: 14px 10px;
+      text-align: center;
+      font-size: 13px;
+      color: rgba(255,255,255,0.5);
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .drop-zone.sm { padding: 9px 8px; font-size: 12px; }
+    .drop-zone.drag-over {
+      border-color: #5b8fff;
+      background: rgba(91,143,255,0.08);
+      color: #fff;
+    }
+    .drop-zone.loaded {
+      border-color: rgba(107,255,158,0.4);
+      color: rgba(107,255,158,0.8);
+    }
+    .drop-zone input { display: none; }
+
+    .url-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .url-row input {
+      flex: 1;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px;
+      color: #fff;
+      font-size: 12px;
+      padding: 6px 8px;
+      outline: none;
+      min-width: 0;
+    }
+    .url-row input::placeholder { color: rgba(255,255,255,0.3); }
+    .url-row input:focus { border-color: #5b8fff; }
+
+    button {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 6px;
+      color: #fff;
+      font-size: 12px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    button:hover { background: rgba(255,255,255,0.18); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.active { background: #3b6cff; border-color: #5b8fff; }
+
+    .effect-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .effect-btn { font-size: 12px; padding: 7px 6px; text-align: center; }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .slider-row label {
+      font-size: 12px;
+      color: rgba(255,255,255,0.6);
+      width: 72px;
+      flex-shrink: 0;
+    }
+    .slider-row input[type=range] { flex: 1; accent-color: #5b8fff; height: 4px; }
+    .slider-row span {
+      font-size: 11px;
+      color: rgba(255,255,255,0.45);
+      width: 34px;
+      text-align: right;
+    }
+
+    .playback-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .playback-row input[type=range] { flex: 1; accent-color: #5b8fff; height: 4px; min-width: 0; }
+    .time-label {
+      font-size: 11px;
+      color: rgba(255,255,255,0.45);
+      width: 34px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    #status { font-size: 12px; color: rgba(255,255,255,0.55); padding: 6px 0 0; min-height: 18px; }
+    #status.error { color: #ff6b6b; }
+    #status.ok { color: #6bff9e; }
+
+    .slot-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .slot-tag {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+      border-radius: 4px; padding: 2px 6px; flex-shrink: 0;
+    }
+    .slot-tag.a { background: rgba(91,143,255,0.25); color: #8ab4ff; }
+    .slot-tag.b { background: rgba(107,255,158,0.15); color: #6bff9e; }
+    .slot-name { font-size: 11px; color: rgba(255,255,255,0.4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .style-row { display: flex; gap: 6px; margin-top: 10px; }
+    .style-btn { flex: 1; font-size: 11px; padding: 6px 4px; text-align: center; }
+
+    .trans-status { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 6px; min-height: 16px; }
+    .trans-status.ok { color: #6bff9e; }
+    .trans-status.error { color: #ff6b6b; }
+
+    #loader {
+      position: fixed; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.55); z-index: 100;
+      font-size: 16px; letter-spacing: 0.05em; color: rgba(255,255,255,0.8);
+    }
+    #loader.visible { display: flex; }
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #5b8fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+
+<body>
+
+  <div id="loader">
+    <div class="spinner"></div>
+    <span id="loader-text">Loading splat…</span>
+  </div>
+
+  <div id="ui">
+
+    <!-- Load panel -->
+    <div class="panel">
+      <div class="panel-title">Load Gaussian (Slot A)</div>
+      <div class="drop-zone" id="drop-zone-a">
+        Drop .ply / .splat / .spz / .sog / .ksplat here<br>or click to browse
+        <input type="file" id="file-input-a" accept=".ply,.splat,.ksplat,.spz,.sog,.sogs">
+      </div>
+      <div class="url-row">
+        <input type="text" id="url-input-a" placeholder="https://… (URL to splat file)">
+        <button id="load-url-btn-a">Load</button>
+      </div>
+      <div id="status"></div>
+    </div>
+
+    <!-- Reveal animation panel -->
+    <div class="panel">
+      <div class="panel-title">Reveal Animation</div>
+      <div class="effect-grid">
+        <button class="effect-btn active" data-effect="Magic">✨ Magic</button>
+        <button class="effect-btn" data-effect="Spread">🌸 Spread</button>
+        <button class="effect-btn" data-effect="Unroll">🌀 Unroll</button>
+        <button class="effect-btn" data-effect="Twister">🌪 Twister</button>
+        <button class="effect-btn" data-effect="Rain">🌧 Rain</button>
+        <button class="effect-btn" data-effect="None">⬜ None</button>
+      </div>
+
+      <div class="playback-row" style="margin-top:10px;">
+        <button id="play-btn">▶ Play</button>
+        <button id="reset-btn">↺ Reset</button>
+        <input type="range" id="progress-bar" min="0" max="20" step="0.05" value="0">
+        <span class="time-label" id="time-label">0.0s</span>
+      </div>
+
+      <div class="slider-row">
+        <label>Speed</label>
+        <input type="range" id="speed-slider" min="0.1" max="3" step="0.05" value="1">
+        <span id="speed-val">1.0×</span>
+      </div>
+
+      <!-- Scene radius: scales the reveal wave to cover larger scenes -->
+      <div class="slider-row">
+        <label>Scene radius</label>
+        <input type="range" id="rev-radius" min="1" max="100" step="0.5" value="5">
+        <span id="rev-radius-val">5.0</span>
+      </div>
+
+      <div class="slider-row" style="margin-top:4px;">
+        <label>Orbit cam</label>
+        <input type="checkbox" id="orbit-toggle" checked style="width:auto;accent-color:#5b8fff;">
+      </div>
+    </div>
+
+    <!-- Transition panel (collapsible) -->
+    <div class="panel">
+      <div class="panel-title toggle" id="trans-toggle">Transition</div>
+      <div class="panel-body hidden" id="trans-body">
+
+        <div class="slot-row">
+          <span class="slot-tag a">A</span>
+          <span class="slot-name" id="slot-a-name">— not loaded —</span>
+        </div>
+        <div class="slot-row">
+          <span class="slot-tag b">B</span>
+          <span class="slot-name" id="slot-b-name">— not loaded —</span>
+        </div>
+
+        <div class="drop-zone sm" id="drop-zone-b">
+          Drop / click to load Slot B (target)
+          <input type="file" id="file-input-b" accept=".ply,.splat,.ksplat,.spz,.sog,.sogs">
+        </div>
+        <div class="url-row">
+          <input type="text" id="url-input-b" placeholder="URL for Slot B">
+          <button id="load-url-btn-b">Load</button>
+        </div>
+
+        <div class="style-row">
+          <button class="style-btn active" data-style="Scatter">💨 Scatter</button>
+          <button class="style-btn" data-style="Fade">🌫 Fade</button>
+          <button class="style-btn" data-style="Explode">💥 Explode</button>
+        </div>
+
+        <div class="slider-row" id="radius-row">
+          <label>Radius</label>
+          <input type="range" id="scatter-radius" min="0.5" max="10" step="0.1" value="2">
+          <span id="radius-val">2.0</span>
+        </div>
+
+        <div class="playback-row" style="margin-top:8px;">
+          <button id="trans-play-btn" disabled>▶ Go</button>
+          <button id="trans-reset-btn" disabled>↺</button>
+          <input type="range" id="trans-bar" min="0" max="1" step="0.005" value="0" disabled>
+          <span class="time-label" id="trans-label">0%</span>
+        </div>
+
+        <div class="slider-row">
+          <label>Speed</label>
+          <input type="range" id="trans-speed" min="0.1" max="3" step="0.05" value="1">
+          <span id="trans-speed-val">1.0×</span>
+        </div>
+
+        <div class="trans-status" id="trans-status"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.10/spark.module.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { SparkRenderer, SplatMesh, SparkControls, dyno } from "@sparkjsdev/spark";
+
+    // ── Renderer / Scene / Camera ──────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 500);
+    camera.position.set(0, 2, 4);
+    camera.lookAt(0, 0, 0);
+
+    const spark = new SparkRenderer({ renderer });
+    scene.add(spark);
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const controls = new SparkControls({ canvas: renderer.domElement });
+
+    // ── Splat state ────────────────────────────────────────────────────────
+    let splatA = null;
+    let splatB = null;
+    let slotAName = "";
+    let slotBName = "";
+
+    // Reveal animation
+    let animT         = 0;
+    let isPlaying     = false;
+    let animSpeed     = 1.0;
+    let currentEffect = "Magic";
+    let orbitEnabled  = true;
+    let cameraAngle   = 0;
+    const animateT    = dyno.dynoFloat(0);
+    const revRadiusDyn = dyno.dynoFloat(5.0);   // scene scale for reveal wave
+
+    // Transition
+    let transT               = 0;
+    let isTransitioning      = false;
+    let transModsApplied     = false;  // true once ▶ Go has been clicked
+    let transSpeed           = 1.0;
+    let transStyle           = "Scatter";
+    const transitionT        = dyno.dynoFloat(0);
+    const transStyleDyn      = dyno.dynoInt(1);   // 1=Scatter 2=Fade 3=Explode
+    const scatterRadiusDyn   = dyno.dynoFloat(2.0);
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const loader      = document.getElementById("loader");
+    const loaderText  = document.getElementById("loader-text");
+    const status      = document.getElementById("status");
+    const playBtn     = document.getElementById("play-btn");
+    const resetBtn    = document.getElementById("reset-btn");
+    const progressBar = document.getElementById("progress-bar");
+    const timeLabel   = document.getElementById("time-label");
+    const speedSlider = document.getElementById("speed-slider");
+    const speedVal    = document.getElementById("speed-val");
+    const revRadiusSlider = document.getElementById("rev-radius");
+    const revRadiusVal    = document.getElementById("rev-radius-val");
+    const orbitToggle = document.getElementById("orbit-toggle");
+    const slotANameEl = document.getElementById("slot-a-name");
+    const slotBNameEl = document.getElementById("slot-b-name");
+    const transPlayBtn    = document.getElementById("trans-play-btn");
+    const transResetBtn   = document.getElementById("trans-reset-btn");
+    const transBar        = document.getElementById("trans-bar");
+    const transLabel      = document.getElementById("trans-label");
+    const transSpeedSlider= document.getElementById("trans-speed");
+    const transSpeedVal   = document.getElementById("trans-speed-val");
+    const transStatusEl   = document.getElementById("trans-status");
+    const radiusRow       = document.getElementById("radius-row");
+    const scatterRadiusSlider = document.getElementById("scatter-radius");
+    const radiusVal           = document.getElementById("radius-val");
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function setLoading(on, text = "Loading splat…") {
+      loaderText.textContent = text;
+      loader.classList.toggle("visible", on);
+    }
+    function setStatus(msg, type = "") { status.textContent = msg; status.className = type; }
+    function setTransStatus(msg, type = "") {
+      transStatusEl.textContent = msg;
+      transStatusEl.className = "trans-status " + type;
+    }
+    function updateTransUI() {
+      const ready = !!(splatA && splatB);
+      transPlayBtn.disabled = !ready;
+      transResetBtn.disabled = !ready;
+      transBar.disabled = !ready;
+    }
+
+    // ── Reveal modifier ────────────────────────────────────────────────────
+    // revRadiusDyn normalises the XZ distance so large scenes still animate fully.
+    // At radius=5 the behaviour matches the original; at radius=20 a splat 20 units
+    // away gets the same "slot" in the wave as a splat 5 units away at radius=5.
+    function buildRevealModifier(effectName) {
+      if (effectName === "None") return null;
+      const effectType = { Magic: 1, Spread: 2, Unroll: 3, Twister: 4, Rain: 5 }[effectName] ?? 1;
+
+      return dyno.dynoBlock(
+        { gsplat: dyno.Gsplat },
+        { gsplat: dyno.Gsplat },
+        ({ gsplat }) => {
+          const d = new dyno.Dyno({
+            inTypes: { gsplat: dyno.Gsplat, t: "float", effectType: "int", revRadius: "float" },
+            outTypes: { gsplat: dyno.Gsplat },
+            globals: () => [dyno.unindent(`
+              vec3 _hash(vec3 p){
+                p=fract(p*0.3183099+0.1);p*=17.0;
+                return fract(vec3(p.x*p.y*p.z,p.x+p.y*p.z,p.x*p.y+p.z));
+              }
+              vec3 _noise(vec3 p){
+                vec3 i=floor(p);vec3 f=fract(p);f=f*f*(3.0-2.0*f);
+                vec3 n000=_hash(i+vec3(0,0,0));vec3 n100=_hash(i+vec3(1,0,0));
+                vec3 n010=_hash(i+vec3(0,1,0));vec3 n110=_hash(i+vec3(1,1,0));
+                vec3 n001=_hash(i+vec3(0,0,1));vec3 n101=_hash(i+vec3(1,0,1));
+                vec3 n011=_hash(i+vec3(0,1,1));vec3 n111=_hash(i+vec3(1,1,1));
+                vec3 x0=mix(n000,n100,f.x);vec3 x1=mix(n010,n110,f.x);
+                vec3 x2=mix(n001,n101,f.x);vec3 x3=mix(n011,n111,f.x);
+                vec3 y0=mix(x0,x1,f.y);vec3 y1=mix(x2,x3,f.y);
+                return mix(y0,y1,f.z);
+              }
+              mat2 _rot(float a){float s=sin(a),c=cos(a);return mat2(c,-s,s,c);}
+              // rscale = revRadius/5.0 normalises distances across all effects
+              vec4 _twister(vec3 pos,vec3 scale,float t,float rscale){
+                vec3 h=_hash(pos);
+                float lxz=length(pos.xz)/rscale;
+                float s=smoothstep(0.,8.,t*t*.1-lxz*2.+2.);
+                if(length(scale)<.05)pos.y=mix(-10.,pos.y,pow(s,2.*h.x));
+                pos.xz=mix(pos.xz*.5,pos.xz,pow(s,2.*h.x));
+                pos.xz*=_rot(t*(1.0-s)*.2+pos.y*20.*(1.-s)*exp(-1.*lxz));
+                return vec4(pos,s*s*s*s);
+              }
+              vec4 _rain(vec3 pos,vec3 scale,float t,float rscale){
+                vec3 h=_hash(pos);
+                float lxz=length(pos.xz)/rscale;
+                float s=pow(smoothstep(0.,5.,t*t*.1-lxz*2.+1.),.5+h.x);
+                float y=pos.y;
+                pos.y=min(-10.+s*15.,pos.y);
+                pos.xz=mix(pos.xz*.3,pos.xz,s);
+                pos.xz*=_rot(t*.3);
+                return vec4(pos,smoothstep(-10.,y,pos.y));
+              }
+            `)],
+            statements: ({ inputs, outputs }) => dyno.unindentLines(`
+              ${outputs.gsplat} = ${inputs.gsplat};
+              float t = ${inputs.t};
+              float rscale = max(${inputs.revRadius}, 0.1) / 5.0;
+              float s = smoothstep(0.,10.,t-4.5)*10.;
+              vec3 scales   = ${inputs.gsplat}.scales;
+              vec3 localPos = ${inputs.gsplat}.center;
+              float l = length(localPos.xz) / rscale;
+              if(${inputs.effectType}==1){
+                float border=abs(s-l-.5);
+                localPos*=1.-.2*exp(-20.*border);
+                vec3 finalScales=mix(scales,vec3(0.002),smoothstep(s-.5,s,l+.5));
+                ${outputs.gsplat}.center=localPos+.1*_noise(localPos.xyz*2.+t*.5)*smoothstep(s-.5,s,l+.5);
+                ${outputs.gsplat}.scales=finalScales;
+                float at=atan(localPos.x,localPos.z)/3.1416;
+                ${outputs.gsplat}.rgba*=step(at,t-3.1416);
+                ${outputs.gsplat}.rgba+=exp(-20.*border)+exp(-50.*abs(t-at-3.1416))*.5;
+              }else if(${inputs.effectType}==2){
+                float tt=t*t*.4+.5;
+                localPos.xz*=min(1.,.3+max(0.,tt*.05));
+                ${outputs.gsplat}.center=localPos;
+                ${outputs.gsplat}.scales=max(mix(vec3(0.),scales,min(tt-7.-l*2.5,1.)),mix(vec3(0.),scales*.2,min(tt-1.-l*2.,1.)));
+                ${outputs.gsplat}.rgba=mix(vec4(.3),${inputs.gsplat}.rgba,clamp(tt-l*2.5-3.,0.,1.));
+              }else if(${inputs.effectType}==3){
+                float ly=localPos.y/rscale;
+                localPos.xz*=_rot((ly*50.-20.)*exp(-t));
+                ${outputs.gsplat}.center=localPos*(1.-exp(-t)*2.);
+                ${outputs.gsplat}.scales=mix(vec3(0.002),scales,smoothstep(.3,.7,t+ly-2.));
+                ${outputs.gsplat}.rgba=${inputs.gsplat}.rgba*step(0.,t*.5+ly-.5);
+              }else if(${inputs.effectType}==4){
+                vec4 r=_twister(localPos,scales,t,rscale);
+                ${outputs.gsplat}.center=r.xyz;
+                ${outputs.gsplat}.scales=mix(vec3(.002),scales,pow(r.w,12.));
+                float spin=-t*.3*(1.-r.w);
+                vec4 sq=vec4(0.,sin(spin*.5),0.,cos(spin*.5));
+                ${outputs.gsplat}.quaternion=quatQuat(sq,${inputs.gsplat}.quaternion);
+              }else if(${inputs.effectType}==5){
+                vec4 r=_rain(localPos,scales,t,rscale);
+                ${outputs.gsplat}.center=r.xyz;
+                ${outputs.gsplat}.scales=mix(vec3(.005),scales,pow(r.w,30.));
+                float spin=-t*.3;
+                vec4 sq=vec4(0.,sin(spin*.5),0.,cos(spin*.5));
+                ${outputs.gsplat}.quaternion=quatQuat(sq,${inputs.gsplat}.quaternion);
+              }
+            `),
+          });
+          gsplat = d.apply({ gsplat, t: animateT, effectType: dyno.dynoInt(effectType), revRadius: revRadiusDyn }).gsplat;
+          return { gsplat };
+        }
+      );
+    }
+
+    function applyRevealEffect() {
+      if (!splatA) return;
+      splatA.objectModifier = buildRevealModifier(currentEffect);
+      splatA.updateGenerator();
+    }
+
+    // ── Transition modifiers ───────────────────────────────────────────────
+    const TRANS_GLOBALS = dyno.unindent(`
+      vec3 _tr_hash(int n){
+        float x=float(n);
+        return fract(sin(vec3(x,x+1.,x+2.))*43758.5453);
+      }
+      float _tr_ease(float x){return x*x*(3.-2.*x);}
+      vec3 _tr_rand(int idx,float radius){
+        vec3 h=_tr_hash(idx);
+        float theta=6.28318*h.x;
+        float r=radius*sqrt(h.y);
+        float vert=(h.z-.5)*radius*.6;
+        return vec3(r*cos(theta),vert,r*sin(theta));
+      }
+    `);
+
+    // isOutgoing=true  → Slot A (fades out / scatters away)
+    // isOutgoing=false → Slot B (fades in / gathers together)
+    function buildTransitionModifier(isOutgoing) {
+      return dyno.dynoBlock(
+        { gsplat: dyno.Gsplat },
+        { gsplat: dyno.Gsplat },
+        ({ gsplat }) => {
+          const d = new dyno.Dyno({
+            inTypes: { gsplat: dyno.Gsplat, t: "float", style: "int", radius: "float" },
+            outTypes: { gsplat: dyno.Gsplat },
+            globals: () => [TRANS_GLOBALS],
+            statements: ({ inputs, outputs }) => {
+              const e    = `_tr_ease(clamp(${inputs.t},0.,1.))`;
+              const orig = `${inputs.gsplat}.center`;
+              const scl  = `${inputs.gsplat}.scales`;
+              const rp   = `_tr_rand(int(${inputs.gsplat}.index),${inputs.radius})`;
+              // Position and scale per style
+              const posOut = isOutgoing
+                ? `(${inputs.style}==1?mix(${orig},${rp},e):${inputs.style}==3?${orig}*(1.+e*3.):${orig})`
+                : `(${inputs.style}==1?mix(${rp},${orig},e):${inputs.style}==3?${orig}*(1.+(1.-e)*3.):${orig})`;
+              const sclOut = isOutgoing
+                ? `(${inputs.style}!=2?mix(${scl},vec3(0.002),e):${scl})`
+                : `(${inputs.style}!=2?mix(vec3(0.002),${scl},e):${scl})`;
+              const alpha = isOutgoing ? `(1.-e)` : `e`;
+              return dyno.unindentLines(`
+                ${outputs.gsplat} = ${inputs.gsplat};
+                float e = ${e};
+                ${outputs.gsplat}.center = ${posOut};
+                ${outputs.gsplat}.scales = ${sclOut};
+                ${outputs.gsplat}.rgba.a  = ${inputs.gsplat}.rgba.a * ${alpha};
+              `);
+            },
+          });
+          gsplat = d.apply({ gsplat, t: transitionT, style: transStyleDyn, radius: scatterRadiusDyn }).gsplat;
+          return { gsplat };
+        }
+      );
+    }
+
+    // Apply transition modifiers to BOTH meshes (call only when ▶ Go is clicked)
+    function applyTransitionModifiers() {
+      if (splatA) { splatA.objectModifier = buildTransitionModifier(true);  splatA.updateGenerator(); }
+      if (splatB) { splatB.objectModifier = buildTransitionModifier(false); splatB.updateGenerator(); }
+      transModsApplied = true;
+    }
+
+    // Hidden modifier for splatB while waiting (alpha=0 at t=0)
+    function applyBHiddenModifier() {
+      if (!splatB) return;
+      splatB.objectModifier = buildTransitionModifier(false); // t=0 → alpha=0
+      splatB.updateGenerator();
+    }
+
+    // B → A promotion after transition completes
+    function promoteB() {
+      if (splatA) { scene.remove(splatA); splatA.dispose?.(); }
+      splatA = splatB;
+      splatB = null;
+      slotAName = slotBName;
+      slotBName = "";
+      slotANameEl.textContent = slotAName || "— not loaded —";
+      slotBNameEl.textContent = "— not loaded —";
+      document.getElementById("drop-zone-b").classList.remove("loaded");
+      document.getElementById("drop-zone-b").textContent = "Drop / click to load Slot B (target)";
+
+      // Restore reveal on new A
+      applyRevealEffect();
+
+      transT = 0; transitionT.value = 0;
+      transBar.value = 0; transLabel.textContent = "0%";
+      isTransitioning = false; transModsApplied = false;
+      transPlayBtn.textContent = "▶ Go";
+      updateTransUI();
+      setTransStatus("Promoted B → A", "ok");
+      setTimeout(() => setTransStatus(""), 2000);
+    }
+
+    // ── Load slot A ────────────────────────────────────────────────────────
+    async function loadSlotA({ url, fileBytes, fileType, name }) {
+      setLoading(true, "Loading Slot A…");
+      setStatus("");
+      if (splatA) { scene.remove(splatA); splatA.dispose?.(); splatA = null; }
+      // Reset transition state so reveal works fresh
+      isTransitioning = false; transModsApplied = false;
+      transPlayBtn.textContent = "▶ Go";
+
+      try {
+        const opts = {};
+        if (url)       opts.url       = url;
+        if (fileBytes) opts.fileBytes = fileBytes;
+        if (fileType)  opts.fileType  = fileType;
+
+        splatA = new SplatMesh(opts);
+        splatA.quaternion.set(1, 0, 0, 0);
+        scene.add(splatA);
+        await splatA.loaded;
+
+        slotAName = name || url || "file";
+        slotANameEl.textContent = slotAName;
+        document.getElementById("drop-zone-a").classList.add("loaded");
+        document.getElementById("drop-zone-a").textContent = "✓ " + slotAName.split(/[\\/]/).pop().slice(0, 32);
+
+        animT = 0; animateT.value = 0;
+        progressBar.value = 0; timeLabel.textContent = "0.0s";
+        isPlaying = false; playBtn.textContent = "▶ Play";
+
+        applyRevealEffect();
+        setStatus("Slot A loaded ✓", "ok");
+        updateTransUI();
+        setLoading(false);
+      } catch (err) {
+        setLoading(false);
+        setStatus("Error: " + err.message, "error");
+        console.error(err);
+      }
+    }
+
+    // ── Load slot B ────────────────────────────────────────────────────────
+    async function loadSlotB({ url, fileBytes, fileType, name }) {
+      setLoading(true, "Loading Slot B…");
+      setTransStatus("Loading…");
+      if (splatB) { scene.remove(splatB); splatB.dispose?.(); splatB = null; }
+
+      // If a transition was in progress, cancel it and restore reveal on A
+      if (isTransitioning || transModsApplied) {
+        isTransitioning = false; transModsApplied = false;
+        transPlayBtn.textContent = "▶ Go";
+        applyRevealEffect();
+      }
+
+      try {
+        const opts = {};
+        if (url)       opts.url       = url;
+        if (fileBytes) opts.fileBytes = fileBytes;
+        if (fileType)  opts.fileType  = fileType;
+
+        splatB = new SplatMesh(opts);
+        splatB.quaternion.set(1, 0, 0, 0);
+        scene.add(splatB);
+        await splatB.loaded;
+
+        slotBName = name || url || "file";
+        slotBNameEl.textContent = slotBName;
+        document.getElementById("drop-zone-b").classList.add("loaded");
+        document.getElementById("drop-zone-b").textContent = "✓ " + slotBName.split(/[\\/]/).pop().slice(0, 32);
+
+        // Keep splatB hidden until user triggers transition
+        applyBHiddenModifier();
+
+        transT = 0; transitionT.value = 0;
+        transBar.value = 0; transLabel.textContent = "0%";
+        setTransStatus("Slot B ready — click ▶ Go", "ok");
+        updateTransUI();
+        setLoading(false);
+      } catch (err) {
+        setLoading(false);
+        setTransStatus("Error: " + err.message, "error");
+        console.error(err);
+      }
+    }
+
+    // ── File helpers ───────────────────────────────────────────────────────
+    const VALID_EXTS = ["ply","splat","ksplat","spz","sog","sogs"];
+    async function handleFileA(file) {
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (!VALID_EXTS.includes(ext)) { setStatus("Unsupported: ." + ext, "error"); return; }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await loadSlotA({ fileBytes: bytes, fileType: (ext==="splat"||ext==="ksplat")?ext:undefined, name: file.name });
+    }
+    async function handleFileB(file) {
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (!VALID_EXTS.includes(ext)) { setTransStatus("Unsupported: ." + ext, "error"); return; }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await loadSlotB({ fileBytes: bytes, fileType: (ext==="splat"||ext==="ksplat")?ext:undefined, name: file.name });
+    }
+
+    // ── Drop / browse wiring ───────────────────────────────────────────────
+    function wireDropZone(zoneId, inputId, handler) {
+      const zone  = document.getElementById(zoneId);
+      const input = document.getElementById(inputId);
+      zone.addEventListener("click",     () => input.click());
+      zone.addEventListener("dragover",  e => { e.preventDefault(); zone.classList.add("drag-over"); });
+      zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+      zone.addEventListener("drop", async e => {
+        e.preventDefault(); zone.classList.remove("drag-over");
+        const f = e.dataTransfer.files[0]; if (f) await handler(f);
+      });
+      input.addEventListener("change", async () => { if (input.files[0]) await handler(input.files[0]); });
+    }
+    wireDropZone("drop-zone-a", "file-input-a", handleFileA);
+    wireDropZone("drop-zone-b", "file-input-b", handleFileB);
+
+    function wireUrlLoad(inputId, btnId, loader) {
+      const inp = document.getElementById(inputId);
+      const btn = document.getElementById(btnId);
+      btn.addEventListener("click", async () => {
+        const url = inp.value.trim();
+        if (!url) return;
+        await loader({ url, name: url.split("/").pop() });
+      });
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") btn.click(); });
+    }
+    wireUrlLoad("url-input-a", "load-url-btn-a", loadSlotA);
+    wireUrlLoad("url-input-b", "load-url-btn-b", loadSlotB);
+
+    // ── Transition panel toggle ────────────────────────────────────────────
+    const transToggle = document.getElementById("trans-toggle");
+    const transBody   = document.getElementById("trans-body");
+    transToggle.addEventListener("click", () => {
+      const open = !transBody.classList.contains("hidden");
+      transBody.classList.toggle("hidden", open);
+      transToggle.classList.toggle("closed", open);
+    });
+
+    // ── Reveal effect buttons ──────────────────────────────────────────────
+    document.querySelectorAll(".effect-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".effect-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentEffect = btn.dataset.effect;
+        animT = 0; animateT.value = 0;
+        progressBar.value = 0; timeLabel.textContent = "0.0s";
+        isPlaying = false; playBtn.textContent = "▶ Play";
+        // Only update reveal modifier if not mid-transition
+        if (!transModsApplied) applyRevealEffect();
+      });
+    });
+
+    // ── Reveal playback ────────────────────────────────────────────────────
+    const MAX_T = 20;
+    playBtn.addEventListener("click", () => {
+      isPlaying = !isPlaying;
+      playBtn.textContent = isPlaying ? "⏸ Pause" : "▶ Play";
+      if (isPlaying && animT >= MAX_T) animT = 0;
+    });
+    resetBtn.addEventListener("click", () => {
+      animT = 0; animateT.value = 0;
+      progressBar.value = 0; timeLabel.textContent = "0.0s";
+      isPlaying = false; playBtn.textContent = "▶ Play";
+      if (splatA) splatA.updateVersion?.();
+    });
+    progressBar.addEventListener("input", () => {
+      animT = parseFloat(progressBar.value);
+      animateT.value = animT;
+      timeLabel.textContent = animT.toFixed(1) + "s";
+      if (splatA) splatA.updateVersion?.();
+    });
+    speedSlider.addEventListener("input", () => {
+      animSpeed = parseFloat(speedSlider.value);
+      speedVal.textContent = animSpeed.toFixed(1) + "×";
+    });
+
+    // Scene radius slider
+    revRadiusSlider.addEventListener("input", () => {
+      revRadiusDyn.value = parseFloat(revRadiusSlider.value);
+      revRadiusVal.textContent = revRadiusDyn.value.toFixed(1);
+      if (splatA) splatA.updateVersion?.();
+    });
+
+    orbitToggle.addEventListener("change", () => { orbitEnabled = orbitToggle.checked; });
+
+    // ── Transition style buttons ───────────────────────────────────────────
+    document.querySelectorAll(".style-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".style-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        transStyle = btn.dataset.style;
+        transStyleDyn.value = { Scatter: 1, Fade: 2, Explode: 3 }[transStyle] ?? 1;
+        radiusRow.style.display = transStyle === "Fade" ? "none" : "";
+        // Rebuild if already applied
+        if (transModsApplied) applyTransitionModifiers();
+      });
+    });
+
+    scatterRadiusSlider.addEventListener("input", () => {
+      scatterRadiusDyn.value = parseFloat(scatterRadiusSlider.value);
+      radiusVal.textContent = scatterRadiusDyn.value.toFixed(1);
+    });
+
+    // ── Transition playback ────────────────────────────────────────────────
+    transPlayBtn.addEventListener("click", () => {
+      if (!splatA || !splatB) return;
+      if (!isTransitioning) {
+        // Apply transition modifiers to BOTH meshes on first Go
+        if (!transModsApplied) applyTransitionModifiers();
+        isTransitioning = true;
+        transPlayBtn.textContent = "⏸ Pause";
+        if (transT >= 1) transT = 0;
+      } else {
+        isTransitioning = false;
+        transPlayBtn.textContent = "▶ Go";
+      }
+    });
+
+    transResetBtn.addEventListener("click", () => {
+      transT = 0; transitionT.value = 0;
+      transBar.value = 0; transLabel.textContent = "0%";
+      isTransitioning = false; transModsApplied = false;
+      transPlayBtn.textContent = "▶ Go";
+      // Restore reveal modifier on A, keep B hidden
+      applyRevealEffect();
+      applyBHiddenModifier();
+    });
+
+    // Scrub bar: only sets the dyno float — modifiers are live if applied
+    transBar.addEventListener("input", () => {
+      transT = parseFloat(transBar.value);
+      transitionT.value = transT;
+      transLabel.textContent = Math.round(transT * 100) + "%";
+      if (splatA) splatA.updateVersion?.();
+      if (splatB) splatB.updateVersion?.();
+    });
+
+    transSpeedSlider.addEventListener("input", () => {
+      transSpeed = parseFloat(transSpeedSlider.value);
+      transSpeedVal.textContent = transSpeed.toFixed(1) + "×";
+    });
+
+    // ── Render loop ────────────────────────────────────────────────────────
+    let lastTime = null;
+    renderer.setAnimationLoop(function animate(time) {
+      const dt = lastTime == null ? 0 : (time - lastTime) / 1000;
+      lastTime = time;
+
+      // Reveal animation (only when not in mid-transition)
+      if (isPlaying && splatA && !transModsApplied) {
+        animT = Math.min(animT + dt * animSpeed, MAX_T);
+        animateT.value = animT;
+        progressBar.value = animT;
+        timeLabel.textContent = animT.toFixed(1) + "s";
+        if (animT >= MAX_T) { isPlaying = false; playBtn.textContent = "▶ Play"; }
+      }
+
+      // Transition progress
+      if (isTransitioning && splatA && splatB) {
+        transT = Math.min(transT + dt * transSpeed * 0.3, 1);
+        transitionT.value = transT;
+        transBar.value = transT;
+        transLabel.textContent = Math.round(transT * 100) + "%";
+        if (transT >= 1) { isTransitioning = false; promoteB(); }
+      }
+
+      // Orbit camera
+      if (orbitEnabled && !(currentEffect === "Twister" || currentEffect === "Rain")) {
+        cameraAngle += dt * 0.2;
+        const radius = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
+        camera.position.x = Math.cos(cameraAngle) * radius;
+        camera.position.z = Math.sin(cameraAngle) * radius;
+        camera.lookAt(0, 0, 0);
+      }
+
+      if (splatA) splatA.updateVersion?.();
+      if (splatB) splatB.updateVersion?.();
+
+      controls.update(camera);
+      renderer.render(scene, camera);
+    });
+
+    // ── H key: toggle UI ──────────────────────────────────────────────────
+    const ui   = document.getElementById("ui");
+    const hint = document.createElement("div");
+    hint.textContent = "H — toggle UI  |  Space — play/pause  |  R — reset reveal";
+    Object.assign(hint.style, {
+      position: "fixed", bottom: "14px", right: "16px",
+      fontSize: "11px", color: "rgba(255,255,255,0.25)",
+      pointerEvents: "none", userSelect: "none", zIndex: "10",
+    });
+    document.body.appendChild(hint);
+    document.addEventListener("keydown", e => {
+      // Ignore shortcuts when typing in an input field
+      if (e.target.tagName === "INPUT" && e.target.type === "text") return;
+
+      if (e.key === "h" || e.key === "H") {
+        const hidden = ui.style.display === "none";
+        ui.style.display = hidden ? "" : "none";
+        hint.style.display = hidden ? "" : "none";
+      }
+      if (e.key === " ") {
+        e.preventDefault();
+        playBtn.click();
+      }
+      if (e.key === "r" || e.key === "R") {
+        resetBtn.click();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:sparkjs.dev)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/sparkjsdev/spark/main/examples/splat-reveal-effects/index.html\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/sparkjsdev/spark/main/examples/hello-world/index.html\")",
+      "Bash(curl -s \"https://sparkjs.dev/docs/\")",
+      "WebFetch(domain:api.github.com)"
+    ]
+  }
+}
